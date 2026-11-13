@@ -1,7 +1,9 @@
 robot:
-  name: "T701_right"  # SDK 构造函数使用 name，电机参数解析使用 robot_name
-  robot_name: "T701_right"
-  param_file: "../T701_robot_param/motor_param/7dof_T701_params_right.yaml"
+  name: "T701-HT_right"
+  # 构造函数读取 name，参数解析读取 robot_name。
+  # The SDK constructor reads name. The parameter parser reads robot_name.
+  robot_name: "T701-HT_right"
+  param_file: "../T701-HT_robot_param/motor_param/7dof_T701-HT_params_right.yaml"
   joint_limits:
     lower: [-1.6581, -0.2793, -1.5708, -1.0472, -1.3614, -0.7854, -1.5708]
     upper: [3.0543, 3.4208, 1.5708, 2.2689, 1.3614, 0.7854, 1.5708]
@@ -13,7 +15,7 @@ robot:
   acceleration_limits: [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
 
 urdf:
-  file_path: "../T701_URDF/urdf/T701.urdf"
+  file_path: "../T701-HT_URDF/urdf/T701-HT.urdf"
   base_link: "base_link"
   end_effector_link: "r_joint7_link"
 
@@ -26,7 +28,8 @@ kinematics:
     - "r_joint5_link"
     - "r_joint6_link"
     - "r_joint7_link"
-  # 电机坐标 -> T701 URDF 坐标。新模型的 J2/J6 轴相对旧电机坐标翻转。
+  # 电机坐标转为 T701-HT URDF 坐标，J2 和 J6 方向相反。
+  # Map motor coordinates to the T701-HT URDF. J2 and J6 have reversed signs.
   joint_signs: [1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0]
 
 control:

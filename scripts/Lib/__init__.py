@@ -1,1 +1,1 @@
-"""T701 示例使用的原 SDK 运行库。"""
+"""T701-HT 示例运行库。 / Runtime library for the T701-HT examples."""
