@@ -157,7 +157,7 @@ class PinocchioOSQPIK:
         if self.lower is not None:
             safe_lower = self.lower + self.joint_limit_margin
             safe_upper = self.upper - self.joint_limit_margin
-            # J7 hardware zero is a valid boundary in the Origami model.
+            # J7 hardware zero is a valid boundary in the T701-HT model.
             safe_lower = np.where(np.isclose(self.lower, 0.0), self.lower, safe_lower)
             safe_upper = np.where(np.isclose(self.upper, 0.0), self.upper, safe_upper)
             position_lower = (safe_lower - joint) / dt

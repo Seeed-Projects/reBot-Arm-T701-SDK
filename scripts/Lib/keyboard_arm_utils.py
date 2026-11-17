@@ -6,8 +6,7 @@ import time
 
 import numpy as np
 
-from .arm_pose_presets import VR_LEFT_JOINTS
-from .arm_shutdown import register_arm
+from .t701_ht import VR_LEFT_JOINTS, register_arm
 
 
 # 双臂 VR 镜像初始姿态。右臂 J1/J4 使用镜像限位后，两侧可使用

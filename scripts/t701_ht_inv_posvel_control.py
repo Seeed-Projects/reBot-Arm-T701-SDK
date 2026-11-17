@@ -7,8 +7,8 @@ import time
 import numpy as np
 
 from Lib import T701HT
-from Lib.arm_shutdown import register_arm, return_home_on_exit
-from Lib.arm_pose_presets import left_legacy_pose
+from Lib.t701_ht import register_arm, return_home_on_exit
+from Lib.t701_ht import left_legacy_pose
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -73,6 +73,8 @@ def main():
                 [0.5] * robot.motor_count,
                 robot.max_torque,
                 iswait=True,
+                tolerance=0.15,
+                timeout=None,
             )
             print(f"{label}零位准备状态: {success}")
 
@@ -164,6 +166,8 @@ def main():
                 duration=3.0,
                 max_tqu=robot.max_torque,
                 iswait=True,
+                tolerance=0.15,
+                timeout=None,
             )
             print(f"{label}回零状态: {success}")
         time.sleep(2.0)

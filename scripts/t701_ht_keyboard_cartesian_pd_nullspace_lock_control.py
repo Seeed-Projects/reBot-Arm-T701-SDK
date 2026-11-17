@@ -8,7 +8,7 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from Lib import T701HT
-from Lib.arm_shutdown import register_arm, return_home_on_exit
+from Lib.t701_ht import register_arm, return_home_on_exit
 from Lib.keyboard_arm_utils import (
     create_arm_states,
     mirror_rotation,

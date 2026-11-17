@@ -1,11 +1,15 @@
 import time
+from contextvars import ContextVar
+from functools import wraps
+from types import SimpleNamespace
+import signal
 import sys
 import os
 import yaml
 import numpy as np
 import pinocchio as pin
 from scipy.spatial.transform import Rotation as R
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import BPoly, CubicSpline, PPoly
 
 try:
     import t701_ht_can_serial_adapter as htr
@@ -14,6 +18,447 @@ except ImportError as e:
     print("请确保已安装hightorque_robot whl包")
     print("安装方法: pip install hightorque_robot-*.whl")
     sys.exit(1)
+
+# 功能姿态与结束回零由现有核心库提供。
+J7_LEGACY_OFFSET = np.pi / 2.0
+
+
+def left_legacy_pose(values):
+    """旧左臂位置预设转新坐标；速度、反馈、新录制轨迹不得调用此函数。"""
+    pose = np.array(values, dtype=float, copy=True)
+    if pose.shape[-1:] != (7,) or not np.all(np.isfinite(pose)):
+        raise ValueError("旧姿态必须包含七个有限关节位置")
+    pose[..., 6] += J7_LEGACY_OFFSET
+    return pose
+
+
+VR_LEFT_JOINTS = left_legacy_pose([0.3, 0.0, 0.0, -1.87, 0.0, 0.0, 0.0])
+
+
+def vr_initial_pose(mirrored=False):
+    """左右镜像的抬臂初始姿态，夹爪方向与旧版 VR 保持一致。"""
+    return -VR_LEFT_JOINTS.copy() if mirrored else VR_LEFT_JOINTS.copy()
+
+
+def legacy_tool_rotation(rotation):
+    """将旧夹爪局部轴的相对旋转转到新末端 frame，不改变世界轴动作。"""
+    rotation = np.asarray(rotation, dtype=float)
+    if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
+        raise ValueError("旧工具旋转必须是有限的 3x3 矩阵")
+    old_to_new = np.array([[0., 0., 1.], [0., 1., 0.], [-1., 0., 0.]])
+    return old_to_new.T @ rotation @ old_to_new
+
+
+_active_arms = ContextVar("openarm_active_motion_arms", default=None)
+_active_signals = ContextVar("openarm_shutdown_signals", default=None)
+DEFAULT_KP = [30., 50., 60., 25., 15., 10., 10.]
+DEFAULT_KD = [3., 5., 6., 2.5, 1.5, 1., 1.]
+HOME_POSITION_TOLERANCE = .15
+HOME_VELOCITY_TOLERANCE = .25
+
+
+class ShutdownSignals:
+    """首次中断进入回零；再次中断直接结束回零，仍发送停止命令。"""
+
+    def __init__(self):
+        self.previous = {}
+        self.requested = False
+        self.immediate = False
+        self.homing = False
+        self.stopping = False
+
+    def handle(self, signum, _frame):
+        if self.stopping:
+            self.immediate = True
+            return
+        if self.requested or self.homing:
+            self.immediate = True
+            print("\n再次中断：立即停止。", flush=True)
+        else:
+            self.requested = True
+            print("\n收到退出请求：先回真实零位。", flush=True)
+        raise KeyboardInterrupt
+
+    def install(self):
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            self.previous[sig] = signal.signal(sig, self.handle)
+        return self
+
+    def restore(self):
+        for sig, previous in self.previous.items():
+            signal.signal(sig, previous)
+        self.previous.clear()
+
+
+def register_arm(robot, label):
+    """在创建成功后立即登记，后续初始化失败也会进入统一收尾。"""
+    arms = _active_arms.get()
+    if arms is not None and not any(item["robot"] is robot for item in arms):
+        arms.append({"label": label, "robot": robot})
+    return robot
+
+
+def forget_registered_arms():
+    """用于在处理离线绘图前已经完成回零和停止的脚本。"""
+    arms = _active_arms.get()
+    if arms is not None:
+        arms.clear()
+
+
+def _states(arms):
+    result, seen = [], set()
+    for item in arms:
+        state = dict(item) if isinstance(item, dict) else {"label": item[0], "robot": item[1]}
+        if id(state["robot"]) not in seen:
+            result.append(state)
+            seen.add(id(state["robot"]))
+    return result
+
+
+def _vector(value, count, label):
+    value = np.asarray(value, dtype=float)
+    if value.shape != (count,) or not np.all(np.isfinite(value)):
+        raise ValueError(f"{label}维度或数值无效")
+    return value
+
+
+def _feedback(robot):
+    count = robot.motor_count
+    position = _vector(robot.get_current_pos(), count, "关节位置反馈")
+    velocity = _vector(robot.get_current_vel(), count, "关节速度反馈")
+    # SDK 的 position 可能是缓存值；有电机原始反馈时一并检查时间和故障。
+    for motor in getattr(robot, "Motors", []):
+        state = motor.get_current_motor_state()
+        if hasattr(state, "fault") and int(state.fault) != 0:
+            raise RuntimeError(f"电机 ID{motor.get_motor_id()} 故障")
+        if hasattr(state, "time"):
+            age = time.time() - float(state.time)
+            if not np.isfinite(age) or not -.05 <= age <= .5:
+                raise RuntimeError(f"电机 ID{motor.get_motor_id()} 反馈过期")
+    return position, velocity
+
+
+
+def _curve_bounds(curve, derivative=0):
+    """五次回零曲线的解析极值，覆盖帧与帧之间的峰值。"""
+    coefficients = curve.derivative(derivative).c[:, 0, :]
+    span = curve.x[-1] - curve.x[0]
+    bounds = []
+    for values in coefficients.T:
+        roots = np.roots(np.polyder(values))
+        points = [0., span] + [float(r.real) for r in roots
+                              if abs(r.imag) < 1e-9 and 0. < r.real < span]
+        extrema = np.polyval(values, points)
+        bounds.append((np.min(extrema), np.max(extrema)))
+    return np.asarray(bounds).T
+
+
+def _home_curve(state, min_duration, speed):
+    """从实测位置和速度接续，终点位置、速度及加速度均为零。"""
+    robot = state["robot"]
+    q, v = state["start"], state["start_velocity"]
+    count = robot.motor_count
+    configured_v = _vector(getattr(robot, "velocity_limits", np.full(count, speed)), count, "速度限制")
+    configured_a = _vector(getattr(robot, "acceleration_limits", np.full(count, 2.)), count, "加速度限制")
+    if np.any(configured_v <= 0.) or np.any(configured_a <= 0.):
+        raise ValueError("回零速度、加速度限制必须大于零")
+    # 已有速度须先平滑消减，不能在第一帧直接跳成回零低速。
+    allowed_v = np.maximum(np.minimum(configured_v, speed), abs(v))
+    base = max(float(min_duration), 1.875 * float(np.max(abs(q))) / speed)
+    candidates = sorted({max(float(min_duration), base * factor)
+                         for factor in [*(.8**i for i in range(10)), *(1.25**i for i in range(14))]})
+    zeros = np.zeros(count)
+    for duration in candidates:
+        curve = PPoly.from_bernstein_basis(BPoly.from_derivatives(
+            [0., duration], [[q, v, zeros], [zeros, zeros, zeros]],
+        ))
+        lower, upper = _curve_bounds(curve)
+        vl, vh = _curve_bounds(curve, 1)
+        al, ah = _curve_bounds(curve, 2)
+        if (np.all(lower >= state["lower"] - 1e-9)
+                and np.all(upper <= state["upper"] + 1e-9)
+                and np.all(np.maximum(abs(vl), abs(vh)) <= allowed_v + 1e-9)
+                and np.all(np.maximum(abs(al), abs(ah)) <= configured_a + 1e-9)):
+            return curve, duration
+    raise RuntimeError("当前位置和速度无法衔接为限位内的平滑回零曲线")
+
+
+
+def brake_motors(robot, motors=None, *, repeats=3, period=.01):
+    """显式发送电机阻尼刹车；不以 stop 代替，不启动位置或 MIT 保持。"""
+    selected = list(robot.get_motors() if motors is None else motors)
+    if not selected:
+        raise RuntimeError("没有可刹车的电机")
+    errors = []
+    for attempt in range(repeats):
+        queued = False
+        for motor in selected:
+            try:
+                motor.brake()
+                queued = True
+            except Exception as error:
+                errors.append(str(error))
+        if queued:
+            try:
+                robot.motor_send_cmd()
+            except Exception as error:
+                errors.append(str(error))
+        if attempt + 1 < repeats:
+            time.sleep(period)
+    if errors:
+        raise RuntimeError("电机阻尼刹车发送异常: " + "; ".join(errors))
+
+
+
+def raw_motor_home_and_finish(robot, config, *, signals=None):
+    """底层示例仅控制明确选择的电机，平滑回其零位后发送阻尼刹车。"""
+    motors = list(robot.get_motors())
+    root = config["robot"]
+    definitions = [entry for board in root["CANboard"].values()
+                   for port in board["CANport"].values() for entry in port["motor"].values()]
+    if len(definitions) != len(motors):
+        brake_motors(robot, motors)
+        raise RuntimeError("底层回零电机与配置数量不一致")
+    high = root.get("home_parameters")
+    if high is None:
+        brake_motors(robot, motors)
+        raise RuntimeError("底层示例缺少关节回零配置")
+    class SelectedMotors:
+        def __init__(self):
+            self.Motors = motors
+            self.motor_count = len(motors)
+            ids = [motor.get_motor_id() for motor in motors]
+            self.max_torque = np.asarray([high["max_torque"][i-1] if i <= 7 else .5 for i in ids])
+            self.velocity_limits = np.asarray([high["velocity_limits"][i-1] if i <= 7 else .5 for i in ids])
+            self.acceleration_limits = np.asarray([high["acceleration_limits"][i-1] if i <= 7 else 1. for i in ids])
+            self.joint_limits = {
+                bound: np.asarray([high["joint_limits"][bound][i-1] if i <= 7 else high["gripper_limits"][bound] for i in ids])
+                for bound in ("lower", "upper")
+            }
+        def get_current_pos(self):
+            return np.asarray([m.get_current_motor_state().position for m in motors])
+        def get_current_vel(self):
+            return np.asarray([m.get_current_motor_state().velocity for m in motors])
+        def send_get_motor_state_cmd(self):
+            for motor in motors:
+                motor.send_state_cmd()
+        def motor_send_cmd(self):
+            robot.motor_send_cmd()
+        def get_motors(self):
+            return motors
+        def Joint_Pos_Vel(self, q, v, torque, **kwargs):
+            if not np.all(np.isfinite(np.r_[q, v, torque])):
+                raise RuntimeError("底层回零命令无效")
+            if np.any(q < self.joint_limits["lower"]) or np.any(q > self.joint_limits["upper"]):
+                raise RuntimeError("底层回零目标超限")
+            for motor, position, speed, limit in zip(motors, q, v, torque):
+                motor.pos_vel_MAXtqe(float(position), float(speed), float(limit))
+            robot.motor_send_cmd()
+            return True
+    selected = SelectedMotors()
+    return home_and_stop([("所选电机", selected)], signals=signals,
+                         kp=np.zeros(selected.motor_count), kd=np.zeros(selected.motor_count))
+
+
+def home_and_stop(arms, *, control_mode="posvel", kp=None, kd=None,
+                  controller=None, min_duration=3., speed=.35, tolerance=HOME_POSITION_TOLERANCE,
+                  settle_timeout=None, signals=None):
+    """逐臂验证反馈，协调平滑回零，最后逐臂发送电机阻尼刹车。
+
+    MIT、位置速度、速度、软件力矩控制均保持调用方模式。单臂反馈失效
+    不阻止另一臂收尾；默认不设到位等待超时，持续闭环到放宽后的容差。
+    缺失反馈、第二次中断时只尝试刹车，不能保证自动回零。
+    """
+    if control_mode not in ("posvel", "mit", "velocity", "torque"):
+        raise ValueError(f"未知回零模式: {control_mode}")
+    states = _states(arms)
+    if not states:
+        return True
+    signals = signals or _active_signals.get()
+    if signals is not None:
+        signals.homing = True
+    active, errors = [], []
+    interrupted = False
+    try:
+        if signals is not None and signals.immediate:
+            return False
+        for state in states:
+            robot, label = state["robot"], state["label"]
+            try:
+                robot.send_get_motor_state_cmd()
+                robot.motor_send_cmd()
+                time.sleep(.03)
+                position, velocity = _feedback(robot)
+                count = robot.motor_count
+                lower = _vector(robot.joint_limits["lower"], count, "限位下界")
+                upper = _vector(robot.joint_limits["upper"], count, "限位上界")
+                if np.any(lower > 0.) or np.any(upper < 0.):
+                    raise ValueError("当前关节配置不包含真实零位")
+                if np.any(position < lower - .05) or np.any(position > upper + .05):
+                    raise ValueError("当前位置越界，不能生成回零路径")
+                # 在模型边界附近的反馈舍入误差不应导致起点命令被 SDK 拒绝。
+                state["start"] = np.clip(position, lower, upper)
+                state["start_velocity"] = velocity.copy()
+                state["lower"], state["upper"] = lower, upper
+                state["kp"] = _vector(state.get("kp", kp if kp is not None else DEFAULT_KP), count, "回零 KP")
+                state["kd"] = _vector(state.get("kd", kd if kd is not None else DEFAULT_KD), count, "回零 KD")
+                state["torque_limit"] = _vector(robot.max_torque, count, "最大力矩")
+                state["last_error"] = float(np.max(abs(position)))
+                state["gripper"] = None
+                gripper_at_zero = True
+                if hasattr(robot, "get_current_pos_gripper") and getattr(robot, "gripper_limits", None) is not None:
+                    grip_q = float(robot.get_current_pos_gripper())
+                    grip_v = float(robot.get_current_vel_gripper())
+                    lo, hi = float(robot.gripper_limits["lower"]), float(robot.gripper_limits["upper"])
+                    if not np.all(np.isfinite([grip_q, grip_v, lo, hi])) or not lo <= 0. <= hi or not lo-.05 <= grip_q <= hi+.05:
+                        raise ValueError("夹爪反馈或回零范围无效")
+                    grip = {"start": np.array([np.clip(grip_q, lo, hi)]), "start_velocity": np.array([grip_v]),
+                            "lower": np.array([lo]), "upper": np.array([hi]),
+                            "robot": SimpleNamespace(motor_count=1, velocity_limits=np.array([.5]), acceleration_limits=np.array([1.]))}
+                    grip["curve"], grip["duration"] = _home_curve(grip, min_duration, .35)
+                    state["gripper"] = grip
+                    gripper_at_zero = abs(grip_q) <= tolerance and abs(grip_v) <= HOME_VELOCITY_TOLERANCE
+                if np.max(abs(position)) <= tolerance and np.max(abs(velocity)) <= HOME_VELOCITY_TOLERANCE and gripper_at_zero:
+                    print(f"{label}当前已在真实零位，最大误差 {state['last_error']:.3f} rad", flush=True)
+                else:
+                    state["curve"], state["duration"] = _home_curve(state, min_duration, speed)
+                    state["velocity_limit"] = np.maximum(speed, abs(velocity))
+                    active.append(state)
+            except Exception as error:
+                errors.append(f"{label}: {error}")
+                print(f"\n{label}无法回零: {error}", flush=True)
+                try:
+                    brake_motors(robot)
+                    state["stopped"] = True
+                except Exception as stop_error:
+                    errors.append(f"{label}停止失败: {stop_error}")
+        if not active:
+            return not errors
+        start = time.monotonic()
+        next_deadline = time.perf_counter()
+        print("\n退出收尾：平滑回到真实零位（全部关节为 0）...", flush=True)
+        while active:
+            elapsed = time.monotonic() - start
+            for state in list(active):
+                robot, label = state["robot"], state["label"]
+                try:
+                    actual, actual_velocity = _feedback(robot)
+                    duration = state["duration"]
+                    curve_time = min(elapsed, duration)
+                    target = state["curve"](curve_time)
+                    velocity = state["curve"](curve_time, 1)
+                    if elapsed >= duration:
+                        target = np.zeros(robot.motor_count)
+                        velocity = np.zeros(robot.motor_count)
+                    grip = state["gripper"]
+                    gripper_settled = True
+                    if grip is not None:
+                        t_grip = min(elapsed, grip["duration"])
+                        gq, gv = float(grip["curve"](t_grip)[0]), float(grip["curve"](t_grip, 1)[0])
+                        if elapsed >= grip["duration"]:
+                            gq, gv = 0., 0.
+                        if control_mode in ("mit", "torque"):
+                            grip_ok = robot.gripper_control_MIT(gq, gv, 0., 5., .5, send=False)
+                        else:
+                            robot.Motors[robot.gripper_id - 1].pos_vel_MAXtqe(gq, max(abs(gv), .03), .5)
+                            grip_ok = True
+                        if grip_ok is False:
+                            raise RuntimeError("夹爪回零命令被拒绝")
+                    if control_mode == "posvel":
+                        # 此接口的速度为幅值；目标方向由位置决定。
+                        success = robot.Joint_Pos_Vel(target, np.maximum(abs(velocity), .03), robot.max_torque, iswait=False)
+                    elif control_mode == "velocity":
+                        command = velocity + 2. * (target - actual)
+                        command = np.clip(command, -state["velocity_limit"], state["velocity_limit"])
+                        success = robot.Joint_Vel(command)
+                    else:
+                        gravity = _vector(robot.get_Gravity(actual), robot.motor_count, "重力前馈")
+                        if control_mode == "torque":
+                            torque = state["kp"] * (target - actual) + state["kd"] * (velocity - actual_velocity) + gravity
+                            zeros = np.zeros(robot.motor_count)
+                            success = robot.pos_vel_tqe_kp_kd(zeros, zeros, np.clip(torque, -state["torque_limit"], state["torque_limit"]), zeros, zeros)
+                        elif controller is not None:
+                            success = controller(state, target, velocity, actual, actual_velocity)
+                        else:
+                            success = robot.pos_vel_tqe_kp_kd(target, velocity, np.clip(gravity, -state["torque_limit"], state["torque_limit"]), state["kp"], state["kd"])
+                    if success is False:
+                        raise RuntimeError("回零命令被拒绝")
+                    if grip is not None:
+                        grip_actual = float(robot.get_current_pos_gripper())
+                        grip_velocity = float(robot.get_current_vel_gripper())
+                        if not np.all(np.isfinite([grip_actual, grip_velocity])):
+                            raise RuntimeError("夹爪回零反馈无效")
+                        gripper_settled = elapsed >= grip["duration"] and abs(grip_actual) <= tolerance and abs(grip_velocity) <= HOME_VELOCITY_TOLERANCE
+                    state["last_error"] = float(np.max(abs(actual)))
+                    # 到达插值末端后继续闭环确认零位，绝不按时间直接宣告到位。
+                    if elapsed >= duration and state["last_error"] <= tolerance and np.max(abs(actual_velocity)) <= HOME_VELOCITY_TOLERANCE and gripper_settled:
+                        if control_mode == "velocity":
+                            robot.Joint_Vel(np.zeros(robot.motor_count))
+                        print(f"{label}已回零，最大误差 {state['last_error']:.3f} rad", flush=True)
+                        active = [item for item in active if item is not state]
+                    elif settle_timeout is not None and elapsed > duration + settle_timeout:
+                        raise RuntimeError(f"回零未到位，最大误差 {state['last_error']:.3f} rad")
+                except Exception as error:
+                    errors.append(f"{label}: {error}")
+                    print(f"\n{label}回零中止: {error}", flush=True)
+                    active = [item for item in active if item is not state]
+                    try:
+                        brake_motors(robot)
+                        state["stopped"] = True
+                    except Exception as stop_error:
+                        errors.append(f"{label}停止失败: {stop_error}")
+            if active:
+                next_deadline += .01
+                delay = next_deadline - time.perf_counter()
+                if delay > 0.:
+                    time.sleep(delay)
+                else:
+                    next_deadline = time.perf_counter()
+    except KeyboardInterrupt:
+        interrupted = True
+        print("\n回零中断，正在发送电机阻尼刹车。", flush=True)
+    finally:
+        if signals is not None:
+            signals.stopping = True
+        for state in states:
+            if state.get("stopped"):
+                continue
+            try:
+                brake_motors(state["robot"])
+            except Exception as error:
+                errors.append(f"{state['label']}停止失败: {error}")
+                print(f"\n停止{state['label']}失败: {error}", flush=True)
+        if signals is not None:
+            signals.homing = False
+            signals.stopping = False
+        if not errors:
+            print("已发送电机阻尼刹车。", flush=True)
+    return not errors and not interrupted
+
+
+def return_home_on_exit(*, control_mode="posvel", kp=None, kd=None):
+    """覆盖整个 main，包括启动定位中断、异常和正常结束的回零收尾。"""
+    def decorate(function):
+        @wraps(function)
+        def run(*args, **kwargs):
+            arms = []
+            arm_token = _active_arms.set(arms)
+            signals = ShutdownSignals().install()
+            signal_token = _active_signals.set(signals)
+            try:
+                return function(*args, **kwargs)
+            except KeyboardInterrupt:
+                print("\n程序被中断，进入回零收尾。", flush=True)
+            finally:
+                try:
+                    home_and_stop(arms, control_mode=control_mode, kp=kp, kd=kd, signals=signals)
+                finally:
+                    signals.restore()
+                    _active_signals.reset(signal_token)
+                    _active_arms.reset(arm_token)
+        return run
+    return decorate
+
 
 #######################
 # T701HT 机械臂控制类
@@ -647,9 +1092,9 @@ class T701HT(htr.Robot):  # 继承自htr.Robot
         return all_reached, position_errors
     
     def wait_for_position(self, target_positions, tolerance=0.01, timeout=15.0):
-        """等待位置到达"""
-        start_time = time.time()
-        while (time.time() - start_time) < timeout:
+        """等待位置到达；timeout=None 时持续等待，仍可中断。"""
+        start_time = time.monotonic()
+        while timeout is None or (time.monotonic() - start_time) < timeout:
             reached, _ = self.check_position_reached(target_positions, tolerance)
             if reached:
                 return True

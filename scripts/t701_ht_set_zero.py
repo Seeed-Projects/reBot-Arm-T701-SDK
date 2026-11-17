@@ -10,6 +10,7 @@ import os
 import time
 
 from Lib import T701HT
+from Lib.t701_ht import ShutdownSignals, home_and_stop, brake_motors
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -17,9 +18,7 @@ LEFT_CONFIG = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "T701-HT_robot_par
 RIGHT_CONFIG = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "T701-HT_robot_param", "T701-HT_right.yaml"))
 
 RETURN_SPEED = 0.20
-MOVE_TOLERANCE = 0.08
-MOVE_TIMEOUT = 15.0
-MOVE_TIMEOUT_MARGIN = 5.0
+MOVE_TOLERANCE = 0.15
 
 ARM_CHOICES = {
     "1": "left",
@@ -89,71 +88,24 @@ def monitor_states(robots):
 
 
 def return_to_zero(robots):
-    """让已选择的机械臂回到刚刚设置的关节零位。"""
-    targets = {}
-    start_positions = {}
-    for label, robot in robots:
-        robot.send_get_motor_state_cmd()
-        robot.motor_send_cmd()
-        targets[label] = [0.0] * robot.motor_count
-        start_positions[label] = robot.get_current_pos()
-
-    for label, robot in robots:
-        # pos_vel_MAXtqe 的 velocity 参数是正的速度上限，不是带方向的速度。
-        # 目标位置本身决定运动方向；这里不使用 moveJ 生成的有符号速度。
-        commanded = robot.Joint_Pos_Vel(
-            targets[label],
-            [RETURN_SPEED] * robot.motor_count,
-            max_tqu=robot.max_torque,
-            iswait=False,
-        )
-        if not commanded:
-            for _, selected_robot in robots:
-                selected_robot.set_stop()
-            print(f"{label}回零命令未成功下发，所选机械臂已刹车。")
-            return False
-
-    max_distance = max(
-        abs(position)
-        for positions in start_positions.values()
-        for position in positions
-    )
-    timeout = max(MOVE_TIMEOUT, max_distance / RETURN_SPEED + MOVE_TIMEOUT_MARGIN)
+    """仅在菜单明确请求运动时，平滑回零并执行统一收尾。"""
     print(
-        f"已下发回零命令：速度上限 {RETURN_SPEED:.2f} rad/s，"
-        f"到位容差 {MOVE_TOLERANCE:.3f} rad，超时 {timeout:.1f} s"
+        f"准备平滑回零：速度上限 {RETURN_SPEED:.2f} rad/s，"
+        f"到位容差 {MOVE_TOLERANCE:.3f} rad，不设到位超时；Ctrl+C 停止。"
     )
-
-    deadline = time.monotonic() + timeout
-    last_errors = {label: [float("inf")] for label, _ in robots}
-    reached = False
-    while time.monotonic() < deadline:
-        reached = True
-        for label, robot in robots:
-            arm_reached, errors = robot.check_position_reached(
-                targets[label], MOVE_TOLERANCE
-            )
-            last_errors[label] = errors
-            reached = reached and arm_reached
-        if reached:
-            break
-        time.sleep(0.02)
-
-    for label, _ in robots:
-        print(
-            f"{label}回零最大误差: {max(last_errors[label]):.3f} rad "
-            f"(容差 {MOVE_TOLERANCE:.3f} rad)"
+    signals = ShutdownSignals().install()
+    try:
+        reached = home_and_stop(
+            robots, control_mode="posvel", speed=RETURN_SPEED,
+            tolerance=MOVE_TOLERANCE, signals=signals,
         )
-    if not reached:
-        for _, robot in robots:
-            robot.set_stop()
-        print("回零超时：所选机械臂已刹车，请检查上面的误差和机械状态。")
-        print_selected_states(robots)
-        return False
-
-    print("所选机械臂已回到零位。")
-    print_selected_states(robots)
-    return True
+    finally:
+        signals.restore()
+    if reached:
+        print("所选机械臂已完成回零收尾。")
+    else:
+        print("回零收尾未完成；已执行停止处理。")
+    return reached
 
 
 def set_current_as_zero(robots):
@@ -218,11 +170,11 @@ def main():
 
     except KeyboardInterrupt:
         for _, robot in robots:
-            robot.set_stop()
+            brake_motors(robot)
         print("\n\n程序被中断，所选机械臂已刹车。")
     except Exception as exc:
         for _, robot in robots:
-            robot.set_stop()
+            brake_motors(robot)
         print(f"\n错误: {exc}")
         raise
 

@@ -7,8 +7,8 @@ import time
 import numpy as np
 
 from Lib import T701HT
-from Lib.arm_shutdown import register_arm, return_home_on_exit
-from Lib.arm_pose_presets import left_legacy_pose
+from Lib.t701_ht import register_arm, return_home_on_exit
+from Lib.t701_ht import left_legacy_pose
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

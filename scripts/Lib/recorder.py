@@ -126,7 +126,7 @@ class Recorder:
                 raise ValueError(
                     "Recorder.play 只接受单臂轨迹；"
                     "双臂轨迹请使用 "
-                    "5_trajectory_record_replay.py"
+                    "Openarm 3.0 的 5_trajectory_record_replay.py"
                 )
             arm = arms[0]
             frames = [
@@ -144,49 +144,66 @@ class Recorder:
             raise ValueError("轨迹超出当前模型限位，拒绝回放；请按新模型重新录制")
         print(f"[Player] 共 {len(frames)} 帧, dt={playback_dt:.3f}s, mode={mode}")
 
-        # 移动到起始点
-        first_frame = frames[0]
-        print("[Player] 正在移动到轨迹起点...")
+        if mode not in ("mit", "posvel"):
+            raise ValueError("mode 必须是 'mit' 或 'posvel'")
+        from .t701_ht import ShutdownSignals, home_and_stop
+        signals = ShutdownSignals().install()
+        try:
+            # 移动到起始点
+            first_frame = frames[0]
+            print("[Player] 正在移动到轨迹起点...")
 
-        # 关节移动到起点（使用 Joint_Pos_Vel 模式）
-        start_pos = first_frame["pos"]
-        move_vel = [0.5] * len(start_pos)  # 缓慢速度 0.5 rad/s
+            # 关节移动到起点（使用 Joint_Pos_Vel 模式）
+            start_pos = first_frame["pos"]
+            move_vel = [0.5] * len(start_pos)  # 缓慢速度 0.5 rad/s
 
-        # 夹爪移动到起点（如果有夹爪数据）
-        if "gripper_pos" in first_frame:
-            gripper_start_pos = first_frame["gripper_pos"]
-            print(f"[Player] 夹爪移动到起点: {gripper_start_pos:.3f} rad")
-            robot.gripper_control(gripper_start_pos, 0.5, 0.5)
-            time.sleep(2.0)  # 等待夹爪到达
+            # 夹爪移动到起点（如果有夹爪数据）
+            if "gripper_pos" in first_frame:
+                gripper_start_pos = first_frame["gripper_pos"]
+                print(f"[Player] 夹爪移动到起点: {gripper_start_pos:.3f} rad")
+                robot.gripper_control(gripper_start_pos, 0.5, 0.5)
+                time.sleep(2.0)  # 等待夹爪到达
 
-        # 缓慢移动到起点，等待到达
-        robot.Joint_Pos_Vel(start_pos, move_vel, max_torque, iswait=True, tolerance=0.05, timeout=30.0)
+            # 缓慢移动到起点，等待到达
+            if not robot.Joint_Pos_Vel(start_pos, move_vel, max_torque, iswait=True, tolerance=0.05, timeout=30.0):
+                raise RuntimeError("未到达轨迹起点")
 
-        print("[Player] 已到达起点，开始回放...")
-        t0 = time.perf_counter()
+            print("[Player] 已到达起点，开始回放...")
+            t0 = time.perf_counter()
         
-        for f in frames:
-            while time.perf_counter() - t0 < f["t"]:
-                time.sleep(0.0005)
+            for f in frames:
+                while time.perf_counter() - t0 < f["t"]:
+                    time.sleep(0.0005)
 
-            # 关节控制
-            if mode == "mit":
-                robot_torque = np.array(robot.get_Gravity(f["pos"]))
-                if fc is not None and fv is not None:
-                    robot_torque += robot.get_friction_compensation(f["vel"], fc, fv, vel_threshold)
-                if tau_limit is not None:
-                    robot_torque = np.clip(robot_torque, -np.array(tau_limit), np.array(tau_limit))
-                robot.pos_vel_tqe_kp_kd(f["pos"], f["vel"], robot_torque, kp, kd)
-            elif mode == "posvel":
-                robot.Joint_Pos_Vel(f["pos"], f["vel"], max_torque)
-            else:
-                raise ValueError("mode 必须是 'mit' 或 'posvel'")
+                # 关节控制
+                if mode == "mit":
+                    robot_torque = np.array(robot.get_Gravity(f["pos"]))
+                    if fc is not None and fv is not None:
+                        robot_torque += robot.get_friction_compensation(f["vel"], fc, fv, vel_threshold)
+                    if tau_limit is not None:
+                        robot_torque = np.clip(robot_torque, -np.array(tau_limit), np.array(tau_limit))
+                    robot.pos_vel_tqe_kp_kd(f["pos"], f["vel"], robot_torque, kp, kd)
+                elif mode == "posvel":
+                    robot.Joint_Pos_Vel(f["pos"], f["vel"], max_torque)
+                else:
+                    raise ValueError("mode 必须是 'mit' 或 'posvel'")
 
-            # 夹爪控制（如果有夹爪数据）
-            if "gripper_pos" in f:
-                robot.gripper_control_MIT(f["gripper_pos"], f["gripper_vel"], 0.0, gripper_kp, gripper_kd)
+                # 夹爪控制（如果有夹爪数据）
+                if "gripper_pos" in f:
+                    robot.gripper_control_MIT(f["gripper_pos"], f["gripper_vel"], 0.0, gripper_kp, gripper_kd)
 
-        print("[Player] 回放完成")
+            print("[Player] 回放完成")
+
+        except KeyboardInterrupt:
+            print("[Player] 回放中断，进入回零收尾。", flush=True)
+        finally:
+            try:
+                home_and_stop(
+                    [{"label": "回放机械臂", "robot": robot}],
+                    control_mode=mode, kp=kp, kd=kd, signals=signals,
+                )
+            finally:
+                signals.restore()
 
     @staticmethod
     def _prepare_playback_frames(frames, playback_dt: float, smooth_window: int):

@@ -22,8 +22,8 @@ import pinocchio as pin
 from scipy.spatial.transform import Rotation
 
 from Lib import T701HT
-from Lib.arm_shutdown import register_arm, return_home_on_exit
-from Lib.arm_pose_presets import vr_initial_pose
+from Lib.t701_ht import register_arm, return_home_on_exit
+from Lib.t701_ht import vr_initial_pose
 from Lib.qp_ik import PinocchioOSQPIK
 
 
@@ -385,7 +385,7 @@ def execute_dual_mit_joint_motion(
             for state, target in zip(states, targets):
                 state["command_joint"] = target.copy()
             return
-        if elapsed >= duration + settle_timeout:
+        if settle_timeout is not None and elapsed >= duration + settle_timeout:
             details = ", ".join(
                 f"{state['label']}最大误差={error:.3f} rad"
                 for state, error in zip(states, final_errors)
@@ -702,8 +702,8 @@ def return_both_to_zero(states):
         [np.zeros(7, dtype=float) for _ in states],
         duration=10.0,
         label=f"3. QP 演示完成，{selected_scope(states)}使用 MIT 回零",
-        tolerance=0.05,
-        settle_timeout=8.0,
+        tolerance=0.15,
+        settle_timeout=None,
     )
     print(f"   {selected_scope(states)}已使用 MIT 回到零位")
 
