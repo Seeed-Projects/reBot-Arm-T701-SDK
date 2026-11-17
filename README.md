@@ -22,13 +22,13 @@ python -I -m pip install ./motor_whl/hightorque_robot-1.2.0-cp310-cp310-linux_x8
 python -I -m pip install -r requirements.txt
 ```
 
-Check the dependencies and URDF model with the arms disconnected.
+Check the dependencies and URDF model. You can run this check with the arms disconnected.
 
 ```bash
-python -I -c "import hightorque_robot, numpy, pinocchio, scipy, yaml; pinocchio.buildModelFromUrdf('T701-HT_URDF/urdf/T701-HT.urdf'); print('T701-HT environment check passed')"
+python -I -c "import hightorque_robot, numpy, osqp, pinocchio, scipy, yaml; pinocchio.buildModelFromUrdf('T701-HT_URDF/urdf/T701-HT.urdf'); print('T701-HT environment check passed')"
 ```
 
-## 2. Connect the arms
+## 2. Check the connections
 
 1. Connect the power supply.
 
@@ -39,69 +39,71 @@ python -I -c "import hightorque_robot, numpy, pinocchio, scipy, yaml; pinocchio.
 
    ![Mainboard USB-C connection](images/type-c-mainboard.jpg)
 
-Use `--arm both` for both arms, or `--arm left` or `--arm right` for one arm.
+The left arm uses CAN1 and the right arm uses CAN2. Set `board_serial` in the serial binding configuration to the communication board's USB serial number. At startup, the SDK uses the board's USB identity to locate the current serial port. [serial_binding.yaml](T701-HT_robot_param/serial_binding.yaml)
+
+Check the mapping without opening the serial ports. Pass only the corresponding YAML file to check one arm.
 
 ```bash
-ls -l /dev/ttyACM*
-python scripts/t701_ht_read_state.py --arm both --check
+ls -l /dev/serial/by-id/
+python scripts/t701_ht_can_serial_adapter.py T701-HT_robot_param/T701-HT_left.yaml T701-HT_robot_param/T701-HT_right.yaml
 ```
 
-The default ports are `/dev/ttyACM0` for the left arm and `/dev/ttyACM1` for the right arm. If the check reports a permission error, use the following command to grant all local users temporary read and write access, then run the check again. For one arm, specify only its port. Reconnecting or rebooting resets these permissions.
-
-```bash
-sudo chmod 666 /dev/ttyACM0 /dev/ttyACM1
-```
+If Ubuntu reports a serial port permission error, check that your user has read and write access to the device through the `dialout` group.
 
 ## 3. Read motor state
 
-In the menu, enter `1` for the left arm, `2` for the right arm, or `3` for both. Press `Ctrl+C` to exit.
+Enter `1` for the left arm, `2` for the right arm, or `3` for both. About twice a second, the script prints each joint's position, velocity, and torque, plus the gripper's position and velocity. Press `Ctrl+C` to exit.
 
 ```bash
 python scripts/t701_ht_read_state.py
 ```
 
-To read one sample and exit, run the following command.
-
-```bash
-python scripts/t701_ht_read_state.py --arm both --once
-```
-
 ## 4. Set zero positions
 
-Place the selected arm's joints and gripper at their zero positions. Run the script and enter `yes` to overwrite the stored zero positions. Replace `left` with `right` or `both` as needed.
+![T701-HT zero pose](images/base_joint.png)
+
+After choosing an arm, select `1` to read its state once or `2` to read it continuously. With its joints and gripper at their intended zero positions, select `3` to save the current pose as zero. Select `4` to drive the arm to its stored zero position or `0` to exit.
 
 ```bash
-python scripts/t701_ht_set_zero.py --arm left
+python scripts/t701_ht_set_zero.py
 ```
 
 ## 5. Run the demos
 
-Verify the joint zero positions, remove any payload, and clear the arms' range of motion. Start with one arm. Each script opens the same `1`/`2`/`3` menu and accepts `--arm left`, `--arm right`, or `--arm both`.
+Verify the joint zero positions, remove any payload, and clear the arms' range of motion. Start with one arm. Run the demos from the `scripts` directory and enter `1`, `2`, or `3` to select the left arm, right arm, or both.
+
+```bash
+cd scripts
+```
 
 ### Gravity compensation
 
 The demo applies `0.8 × G(q)` as MIT torque feedforward to make the arm easier to move by hand. The joint `Kp` and `Kd` gains and the gripper torque are zero. Support the arm when starting and stopping the demo.
 
 ```bash
-python scripts/t701_ht_gravity_compensation.py
+python t701_ht_gravity_compensation.py
 ```
 
 ### Joint impedance
 
-The arm moves toward a fixed joint target. The left-arm target is `[-0.2, -0.2, 0.2, -0.4, 0.5, 0.2, -0.1]` rad. The right-arm target reverses the sign of each joint angle.
+> **Before starting either demo, make sure the area around the robot and within the arms' range of motion is clear of people and fragile objects.**
+
+The arm moves toward a fixed joint pose at startup. The left-arm target is approximately `[-0.2, -0.2, 0.2, -0.4, 0.5, 0.2, 1.4708]` rad. For the right arm, each target angle has the opposite sign.
 
 Joint impedance with gravity feedforward
 
 ```bash
-python scripts/t701_ht_joint_impedance_with_gravity.py
+python t701_ht_joint_impedance_with_gravity.py
 ```
 
 Joint impedance with gravity feedforward and friction compensation
 
 ```bash
-python scripts/t701_ht_joint_impedance_with_gravity_friction.py
+python t701_ht_joint_impedance_with_gravity_friction.py
 ```
 
-All three demos display the commanded torque in N·m, apply the configured joint torque limits, and set a 250 ms motor command timeout. Press `Ctrl+C` to send stop commands to the selected arms and grippers. Stale feedback, a motor fault, or a joint outside its limits also triggers a stop. Support the arms when stopping.
+All three demos apply the configured joint torque limits. Press `Ctrl+C` to stop the gravity compensation demo. In the joint impedance demos, `Ctrl+C` returns the arms to zero and then stops them. Press `Ctrl+C` again during the return to stop the arms.
+
+For more examples, see [T701-HT and Pinocchio](README_Pinocchio_EN.md).
 
 See the [license](LICENSE).
