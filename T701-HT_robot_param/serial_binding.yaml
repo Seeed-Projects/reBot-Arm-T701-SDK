@@ -1,0 +1,3 @@
+# 板子的 USB 序列号；不会受 /dev 目录枚举顺序或 ACM 编号变化影响。
+# 同一板子：CAN1=USB if00, CAN2=if02, ... CAN7=if0c。
+board_serial: "2024051701"

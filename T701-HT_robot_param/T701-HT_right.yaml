@@ -1,12 +1,10 @@
 robot:
   name: "T701-HT_right"
-  # 构造函数读取 name，参数解析读取 robot_name。
-  # The SDK constructor reads name. The parameter parser reads robot_name.
   robot_name: "T701-HT_right"
   param_file: "../T701-HT_robot_param/motor_param/7dof_T701-HT_params_right.yaml"
   joint_limits:
-    lower: [-1.6581, -0.2793, -1.5708, -1.0472, -1.3614, -0.7854, -1.5708]
-    upper: [3.0543, 3.4208, 1.5708, 2.2689, 1.3614, 0.7854, 1.5708]
+    lower: [-1.6581, -0.2793, -1.5708, -1.0472, -1.3614, -0.7854, -3.14]
+    upper: [3.0543, 3.4208, 1.5708, 2.2689, 1.3614, 0.7854, 0.0]
   gripper_limits:
     lower: -0.2
     upper: 2.2
@@ -21,16 +19,15 @@ urdf:
 
 kinematics:
   joint_names:
-    - "r_joint1_link"
-    - "r_joint2_link"
-    - "r_joint3_link"
-    - "r_joint4_link"
-    - "r_joint5_link"
-    - "r_joint6_link"
-    - "r_joint7_link"
-  # 电机坐标转为 T701-HT URDF 坐标，J2 和 J6 方向相反。
-  # Map motor coordinates to the T701-HT URDF. J2 and J6 have reversed signs.
-  joint_signs: [1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0]
+    - "A_r_joint1_link"
+    - "A_r_joint2_link"
+    - "A_r_joint3_link"
+    - "A_r_joint4_link"
+    - "A_r_joint5_link"
+    - "A_r_joint6_link"
+    - "A_r_joint7_link"
+  # 电机坐标 -> Origami 导出关节坐标；保持现有物理电机零点和方向。
+  joint_signs: [-1, -1, -1, -1, -1, -1, -1]
 
 control:
   default_velocity: 0.5

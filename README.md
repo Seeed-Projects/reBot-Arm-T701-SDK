@@ -104,6 +104,6 @@ python t701_ht_joint_impedance_with_gravity_friction.py
 
 All three demos apply the configured joint torque limits. Press `Ctrl+C` to stop the gravity compensation demo. In the joint impedance demos, `Ctrl+C` returns the arms to zero and then stops them. Press `Ctrl+C` again during the return to stop the arms.
 
-For more examples, see [T701-HT and Pinocchio](README_Pinocchio_EN.md).
+For more examples, see [T701-HT and Pinocchio](README_Pinocchio.md).
 
 See the [license](LICENSE).

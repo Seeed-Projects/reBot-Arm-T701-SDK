@@ -1,33 +1,97 @@
 #!/usr/bin/env python3
-"""T701-HT 关节阻抗、重力前馈与摩擦补偿。 / T701-HT joint impedance with gravity and friction compensation."""
+"""左臂、右臂或双臂关节阻抗、重力与摩擦补偿。"""
+
+import os
+import time
 
 import numpy as np
 
-from t701_ht_joint_impedance_with_gravity import impedance_torque
-from t701_ht_torque_demo import run_torque_demo, torque_demo_parser
+from Lib import T701HT
+from Lib.arm_shutdown import register_arm, return_home_on_exit
+from Lib.arm_pose_presets import left_legacy_pose
 
 
-COULOMB_FRICTION = np.array([0.20, 0.20, 0.15, 0.15, 0.0, 0.1, 0.0])
-VISCOUS_FRICTION = np.array([0.06, 0.06, 0.04, 0.04, 0.0, 0.03, 0.0])
-FRICTION_VELOCITY_THRESHOLD = 0.02
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LEFT_CONFIG = os.path.normpath(
+    os.path.join(SCRIPT_DIR, "..", "T701-HT_robot_param", "T701-HT_left.yaml")
+)
+RIGHT_CONFIG = os.path.normpath(
+    os.path.join(SCRIPT_DIR, "..", "T701-HT_robot_param", "T701-HT_right.yaml")
+)
+
+K = np.array([15.0, 15.0, 10.0, 10.0, 5.0, 3.0, 5.0])
+B = np.array([0.5, 0.8, 0.8, 0.2, 0.2, 0.1, 0.1])
+LEFT_Q_DES = left_legacy_pose([-0.2, -0.2, 0.2, -0.4, 0.5, 0.2, -0.1])
+FC = np.array([0.20, 0.20, 0.15, 0.15, 0.0, 0.1, 0.0])
+FV = np.array([0.06, 0.06, 0.04, 0.04, 0.0, 0.03, 0.0])
+VELOCITY_THRESHOLD = 0.02
 
 
-def gravity_friction_impedance_torque(side, robot, position, states):
-    velocity = np.array([state.velocity for state in states])
-    torque = impedance_torque(side, robot, position, velocity)
-    return torque + robot.get_friction_compensation(
-        velocity, COULOMB_FRICTION, VISCOUS_FRICTION, FRICTION_VELOCITY_THRESHOLD
+def select_arm():
+    print("\n请选择机械臂：")
+    print("  1. 左臂")
+    print("  2. 右臂")
+    print("  3. 双臂")
+    while True:
+        choice = input("请输入 1/2/3: ").strip()
+        if choice == "1":
+            return [("左臂", LEFT_CONFIG, False)]
+        if choice == "2":
+            return [("右臂", RIGHT_CONFIG, True)]
+        if choice == "3":
+            return [
+                ("左臂", LEFT_CONFIG, False),
+                ("右臂", RIGHT_CONFIG, True),
+            ]
+        print("输入无效，请输入 1、2 或 3。")
+
+
+def run_impedance(robot, desired_position):
+    zeros = np.zeros(robot.motor_count)
+    current_position = robot.get_current_pos()
+    current_velocity = robot.get_current_vel()
+    impedance = K * (desired_position - current_position) + B * (
+        zeros - current_velocity
     )
+    gravity = robot.get_Gravity()
+    friction = robot.get_friction_compensation(
+        current_velocity, FC, FV, VELOCITY_THRESHOLD
+    )
+    total = impedance + gravity + friction
+    torque_limit = np.asarray(robot.max_torque, dtype=float)
+    total = np.clip(total, -torque_limit, torque_limit)
+    robot.pos_vel_tqe_kp_kd(zeros, zeros, total, zeros, zeros)
+    return impedance, gravity, friction, total
 
 
+def stop_robots(robots):
+    for label, robot, _ in robots:
+        try:
+            robot.set_stop()
+        except Exception as error:
+            print(f"停止{label}时发生错误: {error}")
+
+
+@return_home_on_exit(control_mode="torque", kp=K, kd=B)
 def main():
-    args = torque_demo_parser(__doc__).parse_args()
-    return run_torque_demo(
-        args.arm,
-        gravity_friction_impedance_torque,
-        "T701-HT 关节阻抗与摩擦补偿 / Joint impedance with friction compensation",
-    )
+    robots = []
+    try:
+        for label, config_path, mirrored in select_arm():
+            desired = -LEFT_Q_DES if mirrored else LEFT_Q_DES.copy()
+            robots.append((label, register_arm(T701HT(config_path), label), desired))
+
+        while True:
+            for label, robot, desired in robots:
+                _, _, _, total = run_impedance(robot, desired)
+                print(f"{label}总力矩: {[f'{value:.3f}' for value in total]}")
+            print("-" * 60)
+            time.sleep(0.002)
+    except KeyboardInterrupt:
+        print("\n程序被中断")
+    except Exception as error:
+        print(f"\n错误: {error}")
+
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
