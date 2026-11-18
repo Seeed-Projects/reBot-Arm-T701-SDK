@@ -51,7 +51,6 @@ FK 和 IK 验证只查询反馈，不下发运动目标。按 `Ctrl+C` 退出时
 | 末端位姿 | `python t701_ht_keyboard_cartesian_pos_control.py` | 按键逐步改变末端目标位姿，逆解成功时移动，无解时维持上一关节目标。 |
 | 末端速度 | `python t701_ht_keyboard_cartesian_vel_control.py` | 按住键时末端持续平移或旋转，松开后速度指令逐步降至零。 |
 | 末端速度与网格碰撞预测 | `python t701_ht_keyboard_cartesian_vel_collision_control.py` | 按键控制末端速度，预测到碰撞或关节越限时下发零速度并提示。 |
-| 笛卡尔阻抗 | `python t701_ht_keyboard_cartesian_impedance_control.py` | 按键调整末端目标位姿，通过关节力矩和重力补偿柔顺跟踪。 |
 | 零空间姿态锁定 | `python t701_ht_keyboard_cartesian_pd_nullspace_lock_control.py` | 跟踪按键指定的末端位姿，同时尽量维持参考关节姿态。 |
 
 在本地或 SSH 终端运行。选臂后会自动移动到 VR 初始姿态。W/S、A/D、Q/E 沿 X、Y、Z 移动，1/2、3/4、5/6 绕对应轴旋转。零空间脚本用 R 重新锁定参考姿态。按 `Esc` 或 `Ctrl+C` 退出时会回零并停止。
