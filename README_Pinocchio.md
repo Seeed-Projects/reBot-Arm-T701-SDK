@@ -30,10 +30,8 @@ After launching a demo, enter `1` for the left arm, `2` for the right arm, or `3
 | FK-to-IK validation at the current pose | `python t701_ht_inverse_kinematics_test.py` | Reads joint angles, solves inverse kinematics for the current pose, and prints the end-effector position and maximum joint angle error. |
 | Gravity compensation | `python t701_ht_gravity_compensation.py` | Applies `0.8 × G(q)` subject to the torque limits to make the arms easier to move by hand, and prints the compensation torque. |
 | Gravity compensation with FK output | `python t701_ht_gravity_compensation_with_fk.py` | Applies `G(q)` subject to the torque limits and prints joint angles, compensation torque, and the end-effector pose. |
-| Joint impedance with gravity feedforward | `python t701_ht_joint_impedance_with_gravity.py` | Moves to and holds a preset joint pose, applies gravity compensation, and prints the total torque. |
-| Joint impedance with gravity and friction feedforward | `python t701_ht_joint_impedance_with_gravity_friction.py` | Moves to and holds the preset joint pose, applies gravity and friction compensation, and prints the total torque. |
 
-The FK and IK checks only read feedback. On `Ctrl+C`, the two kinematics checks and both gravity compensation demos stop the motors directly. Both joint impedance demos return to zero before stopping.
+The FK and IK checks only read feedback. On `Ctrl+C`, the two kinematics checks and both gravity compensation demos stop the motors directly.
 
 ## 3. Cartesian control
 

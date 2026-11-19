@@ -84,24 +84,6 @@ cd scripts
 python t701_ht_gravity_compensation.py
 ```
 
-### 关节阻抗
-
-> **启动前请确认机器人周围及机械臂活动范围内无人、无易碎品，再运行下方示例。**
-
-机械臂启动后会向固定目标姿态移动。左臂目标约为 `[-0.2, -0.2, 0.2, -0.4, 0.5, 0.2, 1.4708]` rad，右臂逐关节取反。
-
-关节阻抗 + 重力前馈
-
-```bash
-python t701_ht_joint_impedance_with_gravity.py
-```
-
-关节阻抗 + 重力前馈 + 摩擦补偿
-
-```bash
-python t701_ht_joint_impedance_with_gravity_friction.py
-```
-
-三个示例按配置限制关节力矩。按 `Ctrl+C` 后，重力补偿例程停止，关节阻抗例程回零再停止。回零期间再次按 `Ctrl+C` 可停止机械臂。更多例程见 [T701-HT 与 Pinocchio](README_Pinocchio_CN.md)。
+示例按配置限制关节力矩。按 `Ctrl+C` 退出时停止电机。更多例程见 [T701-HT 与 Pinocchio](README_Pinocchio_CN.md)。
 
 许可见 [LICENSE](LICENSE)。

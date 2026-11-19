@@ -28,10 +28,8 @@ cd scripts
 | 当前位姿 FK → IK 验证 | `python t701_ht_inverse_kinematics_test.py` | 读取关节角，用当前位姿做逆解，打印末端位置和最大关节角误差。 |
 | 重力补偿 | `python t701_ht_gravity_compensation.py` | 施加限幅后的 `0.8 × G(q)`，减轻手动拖动负担，打印补偿力矩。 |
 | 重力补偿并输出 FK | `python t701_ht_gravity_compensation_with_fk.py` | 施加限幅后的 `G(q)`，打印关节角、补偿力矩和末端位姿。 |
-| 关节阻抗与重力前馈 | `python t701_ht_joint_impedance_with_gravity.py` | 主动移向并保持预设关节姿态，叠加重力补偿，打印总力矩。 |
-| 关节阻抗、重力和摩擦前馈 | `python t701_ht_joint_impedance_with_gravity_friction.py` | 同样移向并保持预设姿态，额外施加摩擦补偿，打印总力矩。 |
 
-FK 和 IK 验证只查询反馈，不下发运动目标。按 `Ctrl+C` 退出时，两种验证和两种重力补偿直接停止电机，两个关节阻抗示例先回零再停止。
+FK 和 IK 验证只查询反馈，不下发运动目标。按 `Ctrl+C` 退出时，两种验证和两种重力补偿直接停止电机。
 
 ## 3. 笛卡尔控制
 
