@@ -30,10 +30,8 @@ After launching a demo, enter `1` for the left arm, `2` for the right arm, or `3
 | FK-to-IK validation at the current pose | `python t701_ht_inverse_kinematics_test.py` | Reads joint angles, solves inverse kinematics for the current pose, and prints the end-effector position and maximum joint angle error. |
 | Gravity compensation | `python t701_ht_gravity_compensation.py` | Applies `0.8 × G(q)` subject to the torque limits to make the arms easier to move by hand, and prints the compensation torque. |
 | Gravity compensation with FK output | `python t701_ht_gravity_compensation_with_fk.py` | Applies `G(q)` subject to the torque limits and prints joint angles, compensation torque, and the end-effector pose. |
-| Joint impedance with gravity feedforward | `python t701_ht_joint_impedance_with_gravity.py` | Moves to and holds a preset joint pose, applies gravity compensation, and prints the total torque. |
-| Joint impedance with gravity and friction feedforward | `python t701_ht_joint_impedance_with_gravity_friction.py` | Moves to and holds the preset joint pose, applies gravity and friction compensation, and prints the total torque. |
 
-The FK and IK checks only read feedback. On `Ctrl+C`, the two kinematics checks and both gravity compensation demos stop the motors directly. Both joint impedance demos return to zero before stopping.
+The FK and IK checks only read feedback. On `Ctrl+C`, the two kinematics checks and both gravity compensation demos stop the motors directly.
 
 ## 3. Cartesian control
 
@@ -53,7 +51,6 @@ Both MoveL demos move to the initial VR pose, run the motion sequence for five s
 | End-effector pose | `python t701_ht_keyboard_cartesian_pos_control.py` | Each key press changes the target pose by one step. The arm moves when IK finds a solution and holds the previous joint target when no solution is found. |
 | End-effector velocity | `python t701_ht_keyboard_cartesian_vel_control.py` | Hold a key to translate or rotate continuously. Release it to ramp the velocity command to zero. |
 | End-effector velocity with mesh-based collision prediction | `python t701_ht_keyboard_cartesian_vel_collision_control.py` | Keys control end-effector velocity. The demo commands zero velocity and displays a message if it predicts a collision or joint limit violation. |
-| Cartesian impedance | `python t701_ht_keyboard_cartesian_impedance_control.py` | Keys adjust the target end-effector pose. The arm tracks it compliantly using joint torque and gravity compensation. |
 | Null-space posture lock | `python t701_ht_keyboard_cartesian_pd_nullspace_lock_control.py` | Tracks the end-effector pose set by the keys while keeping the joint posture as close as possible to the reference. |
 
 Run these demos in a local terminal or over SSH. After arm selection, the selected arms move automatically to the initial VR pose. Use `W`/`S`, `A`/`D`, and `Q`/`E` to translate along X, Y, and Z respectively. Use `1`/`2`, `3`/`4`, and `5`/`6` to rotate about the corresponding axes. In the null-space demo, press `R` to lock the reference posture again. Press `Esc` or `Ctrl+C` to return to zero and stop.

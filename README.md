@@ -84,25 +84,7 @@ The demo applies `0.8 × G(q)` as MIT torque feedforward to make the arm easier 
 python t701_ht_gravity_compensation.py
 ```
 
-### Joint impedance
-
-> **Before starting either demo, make sure the area around the robot and within the arms' range of motion is clear of people and fragile objects.**
-
-The arm moves toward a fixed joint pose at startup. The left-arm target is approximately `[-0.2, -0.2, 0.2, -0.4, 0.5, 0.2, 1.4708]` rad. For the right arm, each target angle has the opposite sign.
-
-Joint impedance with gravity feedforward
-
-```bash
-python t701_ht_joint_impedance_with_gravity.py
-```
-
-Joint impedance with gravity feedforward and friction compensation
-
-```bash
-python t701_ht_joint_impedance_with_gravity_friction.py
-```
-
-All three demos apply the configured joint torque limits. Press `Ctrl+C` to stop the gravity compensation demo. In the joint impedance demos, `Ctrl+C` returns the arms to zero and then stops them. Press `Ctrl+C` again during the return to stop the arms.
+The demo applies the configured joint torque limits. Press `Ctrl+C` to stop the motors.
 
 For more examples, see [T701-HT and Pinocchio](README_Pinocchio.md).
 
