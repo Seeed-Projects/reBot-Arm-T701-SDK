@@ -88,4 +88,8 @@ The demo applies the configured joint torque limits. Press `Ctrl+C` to stop the 
 
 For more examples, see [T701-HT and Pinocchio](README_Pinocchio.md).
 
+## 6. VR teleoperation
+
+Follow the [VR teleoperation guide](README_VR.md) to start USB or WiFi streaming and `scripts/t701_ht_vr_dual_cartesian_qp_control.py`. This entry controls both arms directly. Stop Verify and clear the arms' range of motion before starting it.
+
 See the [license](LICENSE).

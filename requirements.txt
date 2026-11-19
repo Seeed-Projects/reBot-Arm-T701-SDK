@@ -18,3 +18,5 @@ osqp>=1.0.0           # VR 控制的有界速度级 QP 逆运动学
 # 2. 如果不使用 Lib，只需安装 whl 包即可
 # 3. 建议在 conda 环境中安装，Python 版本 3.9-3.12
 # 4. 避免与 ROS 环境冲突，建议使用独立的 conda 环境
+
+websockets==14.2       # Quest WebSocket -> UDP relay; same version as the verified environment
