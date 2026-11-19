@@ -86,4 +86,8 @@ python t701_ht_gravity_compensation.py
 
 示例按配置限制关节力矩。按 `Ctrl+C` 退出时停止电机。更多例程见 [T701-HT 与 Pinocchio](README_Pinocchio_CN.md)。
 
+## 6. VR 遥操作
+
+按 [VR 启动说明](README_VR_CN.md) 配置 USB 或 WiFi 串流，再运行 `scripts/t701_ht_vr_dual_cartesian_qp_control.py`。该入口直接控制双臂；启动前停止 Verify，清空机械臂活动范围。
+
 许可见 [LICENSE](LICENSE)。

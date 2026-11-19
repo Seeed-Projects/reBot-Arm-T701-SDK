@@ -1,3 +1,6 @@
 __pycache__/
 *.py[cod]
 .venv/
+Quest_controller_stream/.certs/
+Quest_controller_stream/.quest_stream_ui.json
+Quest_controller_stream/.quest_stream_tui.json
